@@ -7,11 +7,15 @@ app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 WEBHOOK_URL = 'https://telebots.alwaysdata.net/t2s/webhook'
 
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Howdy, how are you doing?")
+
+
 @app.route('/')
 def hello_world():
     return "Git is awesome i liked it"
-
-
 
 # Webhook endpoint to handle incoming updates
 @app.route('/webhook', methods=['POST'])
@@ -19,12 +23,6 @@ def webhook():
     json_data = request.get_json()
     bot.process_new_updates([telebot.types.Update.de_json(json_data)])
     return '', 200
-
-
-# Homepage route
-@app.route('/')
-def home():
-    return "Welcome to the TeleBot Flask app!", 200
 
 # Set the webhook
 @app.route('/set_webhook', methods=['GET'])
