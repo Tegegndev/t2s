@@ -5,11 +5,31 @@ from config import BOT_TOKEN, CHAT_ID, DETECT_LANG_API_KEY, TEXT_TO_SPEECH_API_U
 import detectlanguage
 import requests
 from telebot import types
+import json
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 WEBHOOK_URL = 'https://telebots.alwaysdata.net/t2s/webhook'
 detectlanguage.configuration.secure = True
+
+def store_user_data(user_id, username):
+    try:
+        with open('user_data.json', 'r') as file:
+            for line in file:
+                user = json.loads(line)
+                if user['user_id'] == user_id:
+                    return True
+                    
+        with open('user_data.json', 'a') as file:
+            json.dump({'user_id': user_id, 'username': username}, file)
+            file.write('\n')
+        return True
+    except FileNotFoundError:
+        with open('user_data.json', 'w') as file:
+            json.dump({'user_id': user_id, 'username': username}, file)
+            file.write('\n')
+        return True
+
 
 class TextToSpeechApi:
     def __init__(self):
@@ -99,7 +119,7 @@ def process_text(message):
         msg = bot.send_message(user_id, "Processing your text...")
         api = TextToSpeechApi()
         
-        audio_file = api.text_to_speech(message.text, user_id)
+        audio_file = api.text_to_speech(message.text, f'@{bot.get_me().username}_{user_id}')
         
         with open(audio_file, "rb") as audio:
             bot.send_audio(message.chat.id, audio)
