@@ -1,1 +1,5 @@
 env/
+__pycache__/
+*.pyc
+test_performance.py
+user_data.json

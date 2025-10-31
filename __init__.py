@@ -6,52 +6,96 @@ import detectlanguage
 import requests
 from telebot import types
 import json
+import os
+from functools import lru_cache
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 WEBHOOK_URL = 'https://telebots.alwaysdata.net/t2s/webhook'
+
+# Initialize detectlanguage configuration once
+detectlanguage.configuration.api_key = DETECT_LANG_API_KEY
 detectlanguage.configuration.secure = True
 
+# Cache for user data to avoid repeated file reads
+_user_cache = None
+
+def _load_user_cache():
+    """Load user data into memory cache once"""
+    global _user_cache
+    if _user_cache is not None:
+        return _user_cache
+    
+    _user_cache = set()
+    if os.path.exists('user_data.json'):
+        try:
+            with open('user_data.json', 'r') as file:
+                for line in file:
+                    if line.strip():
+                        user = json.loads(line)
+                        _user_cache.add(user['user_id'])
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return _user_cache
+
+
 def store_user_data(user_id, username):
+    """Store user data efficiently using in-memory cache"""
+    user_cache = _load_user_cache()
+    
+    # Check if user already exists in cache
+    if user_id in user_cache:
+        return True
+    
+    # Add to cache and append to file
+    user_cache.add(user_id)
     try:
-        with open('user_data.json', 'r') as file:
-            for line in file:
-                user = json.loads(line)
-                if user['user_id'] == user_id:
-                    return True
-                    
         with open('user_data.json', 'a') as file:
             json.dump({'user_id': user_id, 'username': username}, file)
             file.write('\n')
         return True
-    except FileNotFoundError:
-        with open('user_data.json', 'w') as file:
-            json.dump({'user_id': user_id, 'username': username}, file)
-            file.write('\n')
-        return True
+    except IOError:
+        # Remove from cache if file write fails
+        user_cache.discard(user_id)
+        return False
 
 
 class TextToSpeechApi:
+    _instance = None
+    _language_cache = {}
+    
+    def __new__(cls):
+        """Implement singleton pattern to avoid repeated initialization"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
     def __init__(self):
-        self.detectlanguage = detectlanguage
-        self.detectlanguage.configuration.api_key = DETECT_LANG_API_KEY
-        self.detectlanguage.configuration.secure = True
+        if self._initialized:
+            return
+        self._initialized = True
 
+    @lru_cache(maxsize=128)
     def detect_language(self, text):
+        """Detect language with caching for frequently used texts"""
         try:
-            return self.detectlanguage.simple_detect(text)
+            return detectlanguage.simple_detect(text)
         except Exception as e:
             raise Exception(f"Language detection failed: {str(e)}")
     
     def text_to_speech(self, text, filename):
         try:
+            # Ensure voices directory exists
+            os.makedirs('./voices', exist_ok=True)
+            
             url = TEXT_TO_SPEECH_API_URL
             lang = self.detect_language(text)
             params = {
                 "text": text,
                 "lang": lang
             }
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()  # Raises an HTTPError for bad responses
             
             audio_file = f"./voices/{filename}.mp3"
@@ -115,6 +159,7 @@ def callback_query(call):
 
 def process_text(message):
     user_id = message.chat.id
+    msg = None
     try:
         msg = bot.send_message(user_id, "Processing your text...")
         api = TextToSpeechApi()
@@ -123,13 +168,23 @@ def process_text(message):
         
         with open(audio_file, "rb") as audio:
             bot.send_audio(message.chat.id, audio)
-            
-        # Cleanup the audio file after sending
-        import os
-        os.remove(audio_file)
         
+        # Delete the processing message after successful completion
+        if msg:
+            try:
+                bot.delete_message(user_id, msg.message_id)
+            except:
+                pass
+                
     except Exception as e:
         bot.send_message(message.chat.id, f"Sorry, an error occurred while processing your request. Please try again later.")
+    finally:
+        # Cleanup the audio file after sending
+        if 'audio_file' in locals():
+            try:
+                os.remove(audio_file)
+            except OSError:
+                pass
 
 
 @app.route('/')
