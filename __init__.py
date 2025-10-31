@@ -77,18 +77,21 @@ class TextToSpeechApi:
 
     def detect_language(self, text):
         """Detect language with caching for frequently used texts"""
+        # Limit text length to prevent memory issues from malicious input
+        cache_key = text[:500] if len(text) > 500 else text
+        
         # Check cache first
-        if text in self._language_cache:
-            return self._language_cache[text]
+        if cache_key in self._language_cache:
+            return self._language_cache[cache_key]
         
         try:
             lang = detectlanguage.simple_detect(text)
             # Cache the result (limit cache size to prevent memory issues)
             if len(self._language_cache) >= 128:
-                # Remove oldest entry (simple FIFO)
+                # Remove oldest entry (FIFO - dict maintains insertion order in Python 3.7+)
                 first_key = next(iter(self._language_cache))
                 del self._language_cache[first_key]
-            self._language_cache[text] = lang
+            self._language_cache[cache_key] = lang
             return lang
         except Exception as e:
             raise Exception(f"Language detection failed: {str(e)}")
@@ -164,6 +167,7 @@ def callback_query(call):
 def process_text(message):
     user_id = message.chat.id
     msg = None
+    audio_file = None
     try:
         msg = bot.send_message(user_id, "Processing your text...")
         api = TextToSpeechApi()
@@ -177,14 +181,15 @@ def process_text(message):
         if msg:
             try:
                 bot.delete_message(user_id, msg.message_id)
-            except:
+            except Exception:
+                # Ignore errors when deleting message (e.g., already deleted, permissions)
                 pass
                 
     except Exception as e:
         bot.send_message(message.chat.id, f"Sorry, an error occurred while processing your request. Please try again later.")
     finally:
         # Cleanup the audio file after sending
-        if 'audio_file' in locals():
+        if audio_file and os.path.exists(audio_file):
             try:
                 os.remove(audio_file)
             except OSError:
