@@ -7,7 +7,6 @@ import requests
 from telebot import types
 import json
 import os
-from functools import lru_cache
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -62,13 +61,13 @@ def store_user_data(user_id, username):
 
 class TextToSpeechApi:
     _instance = None
-    _language_cache = {}
     
     def __new__(cls):
         """Implement singleton pattern to avoid repeated initialization"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
+            cls._instance._language_cache = {}
         return cls._instance
     
     def __init__(self):
@@ -76,11 +75,21 @@ class TextToSpeechApi:
             return
         self._initialized = True
 
-    @lru_cache(maxsize=128)
     def detect_language(self, text):
         """Detect language with caching for frequently used texts"""
+        # Check cache first
+        if text in self._language_cache:
+            return self._language_cache[text]
+        
         try:
-            return detectlanguage.simple_detect(text)
+            lang = detectlanguage.simple_detect(text)
+            # Cache the result (limit cache size to prevent memory issues)
+            if len(self._language_cache) >= 128:
+                # Remove oldest entry (simple FIFO)
+                first_key = next(iter(self._language_cache))
+                del self._language_cache[first_key]
+            self._language_cache[text] = lang
+            return lang
         except Exception as e:
             raise Exception(f"Language detection failed: {str(e)}")
     
@@ -122,11 +131,6 @@ def start(message):
                      "I can convert any text you send me into speech. 🗣️\n\n"
                      "Just send me some text and I'll convert it to audio for you! 🔊\n\n"
                      , reply_markup=keyboard)
-''' try:
-        store_user_data(message.from_user.id, message.from_user.username)
-    except Exception as e:
-        pass
-'''
 
 #handle all user messages
 @bot.message_handler(func=lambda message: True)
